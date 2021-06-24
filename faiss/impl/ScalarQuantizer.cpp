@@ -13,7 +13,7 @@
 #include <cstdio>
 
 #include <faiss/impl/platform_macros.h>
-#include <omp.h>
+#include <faiss/omp.h>
 
 #ifdef __SSE__
 #include <immintrin.h>

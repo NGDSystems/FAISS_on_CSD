@@ -9,7 +9,7 @@
 
 #include <faiss/IndexIVF.h>
 
-#include <omp.h>
+#include <faiss/omp.h>
 #include <mutex>
 
 #include <algorithm>

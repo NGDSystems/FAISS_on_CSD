@@ -50,7 +50,7 @@ typedef uint64_t size_t;
 
 
 #include <stdint.h>
-#include <omp.h>
+#include <faiss/omp.h>
 
 
 

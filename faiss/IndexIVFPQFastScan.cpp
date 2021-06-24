@@ -11,7 +11,7 @@
 #include <cinttypes>
 #include <cstdio>
 
-#include <omp.h>
+#include <faiss/omp.h>
 
 #include <memory>
 

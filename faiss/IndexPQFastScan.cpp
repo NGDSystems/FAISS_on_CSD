@@ -11,7 +11,7 @@
 #include <cassert>
 #include <memory>
 
-#include <omp.h>
+#include <faiss/omp.h>
 
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/random.h>

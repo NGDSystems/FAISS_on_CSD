@@ -9,7 +9,7 @@
 
 #include <faiss/utils/extra_distances.h>
 
-#include <omp.h>
+#include <faiss/omp.h>
 #include <algorithm>
 #include <cmath>
 

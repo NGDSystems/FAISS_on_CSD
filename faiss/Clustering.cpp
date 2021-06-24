@@ -16,7 +16,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include <omp.h>
+#include <faiss/omp.h>
 
 #include <faiss/IndexFlat.h>
 #include <faiss/impl/FaissAssert.h>

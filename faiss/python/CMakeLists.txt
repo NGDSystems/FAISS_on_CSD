@@ -92,20 +92,16 @@ if(FAISS_ENABLE_GPU)
   target_link_libraries(swigfaiss_avx2 PRIVATE CUDA::cudart)
 endif()
 
-find_package(OpenMP REQUIRED)
-
 target_link_libraries(swigfaiss PRIVATE
   faiss
   Python::Module
   Python::NumPy
-  OpenMP::OpenMP_CXX
 )
 
 target_link_libraries(swigfaiss_avx2 PRIVATE
   faiss_avx2
   Python::Module
   Python::NumPy
-  OpenMP::OpenMP_CXX
 )
 
 # Hack so that python_callbacks.h can be included as

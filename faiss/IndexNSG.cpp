@@ -9,7 +9,7 @@
 
 #include <faiss/IndexNSG.h>
 
-#include <omp.h>
+#include <faiss/omp.h>
 
 #include <cinttypes>
 #include <memory>

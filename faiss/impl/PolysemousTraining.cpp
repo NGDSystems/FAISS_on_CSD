@@ -10,7 +10,7 @@
 #include <faiss/impl/PolysemousTraining.h>
 #include "faiss/impl/FaissAssert.h"
 
-#include <omp.h>
+#include <faiss/omp.h>
 #include <stdint.h>
 
 #include <cmath>

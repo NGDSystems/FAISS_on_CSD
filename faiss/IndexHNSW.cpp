@@ -9,7 +9,7 @@
 
 #include <faiss/IndexHNSW.h>
 
-#include <omp.h>
+#include <faiss/omp.h>
 #include <cassert>
 #include <cinttypes>
 #include <cmath>

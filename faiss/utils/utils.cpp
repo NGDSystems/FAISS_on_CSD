@@ -25,7 +25,7 @@
 #include <unistd.h>
 #endif // !_MSC_VER
 
-#include <omp.h>
+#include <faiss/omp.h>
 
 #include <algorithm>
 #include <vector>
