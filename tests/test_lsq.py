@@ -332,3 +332,45 @@ class TestLocalSearchQuantizer(unittest.TestCase):
 
         print(err_lsq, err_pq)
         self.assertLess(err_lsq, err_pq)
+
+
+class TestIndexLSQ(unittest.TestCase):
+
+    def test_IndexLSQ(self):
+        ds = datasets.SyntheticDataset(32, 1000, 200, 100)
+        gt = ds.get_groundtruth(10)
+
+        ir = faiss.IndexLSQ(ds.d, 4, 5)
+        ir.train(ds.get_train())
+
+        ir.add(ds.get_database())
+
+        Dref, Iref = ir.search(ds.get_queries(), 10)
+
+        inter_ref = faiss.eval_intersection(Iref, gt)
+
+        # 467
+        self.assertGreater(inter_ref, 460)
+
+    def test_coarse_quantizer(self):
+        ds = datasets.SyntheticDataset(32, 5000, 1000, 100)
+        gt = ds.get_groundtruth(10)
+
+        quantizer = faiss.LocalSearchCoarseQuantizer(ds.d, 2, 4)
+        quantizer.lsq.nperts
+        quantizer.lsq.nperts = 2
+
+        index = faiss.IndexIVFFlat(quantizer, ds.d, 256)
+        index.quantizer_trains_alone = True
+
+        index.train(ds.get_train())
+
+        index.add(ds.get_database())
+        index.nprobe = 4
+
+        Dref, Iref = index.search(ds.get_queries(), 10)
+
+        inter_ref = faiss.eval_intersection(Iref, gt)
+
+        # 249
+        self.assertGreater(inter_ref, 240)

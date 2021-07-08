@@ -8,7 +8,6 @@
 // -*- c++ -*-
 
 #include <faiss/impl/AdditiveQuantizer.h>
-#include <faiss/impl/FaissAssert.h>
 
 #include <cstddef>
 #include <cstdio>
@@ -18,9 +17,10 @@
 
 #include <algorithm>
 
+#include <faiss/impl/FaissAssert.h>
 #include <faiss/utils/Heap.h>
 #include <faiss/utils/distances.h>
-#include <faiss/utils/hamming.h> // BitstringWriter
+#include <faiss/utils/hamming.h>
 #include <faiss/utils/utils.h>
 
 extern "C" {
@@ -61,6 +61,27 @@ void fvec_add(size_t d, const float* a, float b, float* c) {
 
 namespace faiss {
 
+AdditiveQuantizer::AdditiveQuantizer(
+        size_t d,
+        const std::vector<size_t>& nbits,
+        Search_type_t search_type)
+        : d(d),
+          M(nbits.size()),
+          nbits(nbits),
+          verbose(false),
+          is_trained(false),
+          search_type(search_type) {
+    norm_max = norm_min = NAN;
+    code_size = 0;
+    tot_bits = 0;
+    total_codebook_size = 0;
+    is_byte_aligned = false;
+    set_derived_values();
+}
+
+AdditiveQuantizer::AdditiveQuantizer()
+        : AdditiveQuantizer(0, std::vector<size_t>()) {}
+
 void AdditiveQuantizer::set_derived_values() {
     tot_bits = 0;
     is_byte_aligned = true;
@@ -75,17 +96,67 @@ void AdditiveQuantizer::set_derived_values() {
         }
     }
     total_codebook_size = codebook_offsets[M];
+    switch (search_type) {
+        case ST_decompress:
+        case ST_LUT_nonorm:
+        case ST_norm_from_LUT:
+            break; // nothing to add
+        case ST_norm_float:
+            tot_bits += 32;
+            break;
+        case ST_norm_qint8:
+            tot_bits += 8;
+            break;
+        case ST_norm_qint4:
+            tot_bits += 4;
+            break;
+    }
+
     // convert bits to bytes
     code_size = (tot_bits + 7) / 8;
 }
+
+namespace {
+
+// TODO
+// https://stackoverflow.com/questions/31631224/hacks-for-clamping-integer-to-0-255-and-doubles-to-0-0-1-0
+
+uint8_t encode_qint8(float x, float amin, float amax) {
+    float x1 = (x - amin) / (amax - amin) * 256;
+    int32_t xi = int32_t(floor(x1));
+
+    return xi < 0 ? 0 : xi > 255 ? 255 : xi;
+}
+
+uint8_t encode_qint4(float x, float amin, float amax) {
+    float x1 = (x - amin) / (amax - amin) * 16;
+    int32_t xi = int32_t(floor(x1));
+
+    return xi < 0 ? 0 : xi > 15 ? 15 : xi;
+}
+
+float decode_qint8(uint8_t i, float amin, float amax) {
+    return (i + 0.5) / 256 * (amax - amin) + amin;
+}
+
+float decode_qint4(uint8_t i, float amin, float amax) {
+    return (i + 0.5) / 16 * (amax - amin) + amin;
+}
+
+} // anonymous namespace
 
 void AdditiveQuantizer::pack_codes(
         size_t n,
         const int32_t* codes,
         uint8_t* packed_codes,
-        int64_t ld_codes) const {
+        int64_t ld_codes,
+        float* norms) const {
     if (ld_codes == -1) {
         ld_codes = M;
+    }
+    if (search_type == ST_norm_float || search_type == ST_norm_qint4 ||
+        search_type == ST_norm_qint8) {
+        FAISS_THROW_IF_NOT(norms);
     }
 #pragma omp parallel for if (n > 1000)
     for (int64_t i = 0; i < n; i++) {
@@ -93,6 +164,25 @@ void AdditiveQuantizer::pack_codes(
         BitstringWriter bsw(packed_codes + i * code_size, code_size);
         for (int m = 0; m < M; m++) {
             bsw.write(codes1[m], nbits[m]);
+        }
+        switch (search_type) {
+            case ST_decompress:
+            case ST_LUT_nonorm:
+            case ST_norm_from_LUT:
+                break;
+            case ST_norm_float:
+                bsw.write(*(uint32_t*)&norms[i], 32);
+                break;
+            case ST_norm_qint8: {
+                uint8_t b = encode_qint8(norms[i], norm_min, norm_max);
+                bsw.write(b, 8);
+                break;
+            }
+            case ST_norm_qint4: {
+                uint8_t b = encode_qint4(norms[i], norm_min, norm_max);
+                bsw.write(b, 4);
+                break;
+            }
         }
     }
 }
@@ -121,7 +211,7 @@ void AdditiveQuantizer::decode(const uint8_t* code, float* x, size_t n) const {
 AdditiveQuantizer::~AdditiveQuantizer() {}
 
 /****************************************************************************
- * Support for fast distance computations and search with additive quantizer
+ * Support for fast distance computations in centroids
  ****************************************************************************/
 
 void AdditiveQuantizer::compute_centroid_norms(float* norms) const {
@@ -201,7 +291,7 @@ void compute_inner_prod_with_LUT(
 
 } // anonymous namespace
 
-void AdditiveQuantizer::knn_exact_inner_product(
+void AdditiveQuantizer::knn_centroids_inner_product(
         idx_t n,
         const float* xq,
         idx_t k,
@@ -227,7 +317,7 @@ void AdditiveQuantizer::knn_exact_inner_product(
     }
 }
 
-void AdditiveQuantizer::knn_exact_L2(
+void AdditiveQuantizer::knn_centroids_L2(
         idx_t n,
         const float* xq,
         idx_t k,
@@ -265,6 +355,85 @@ void AdditiveQuantizer::knn_exact_L2(
             maxheap_reorder(k, distances_i, labels_i);
         }
     }
+}
+
+/****************************************************************************
+ * Support for fast distance computations in codes
+ ****************************************************************************/
+
+namespace {
+
+float accumulate_IPs(
+        const AdditiveQuantizer& aq,
+        BitstringReader& bs,
+        const uint8_t* codes,
+        const float* LUT) {
+    float accu = 0;
+    for (int m = 0; m < aq.M; m++) {
+        size_t nbit = aq.nbits[m];
+        int idx = bs.read(nbit);
+        accu += LUT[idx];
+        LUT += (uint64_t)1 << nbit;
+    }
+    return accu;
+}
+
+} // anonymous namespace
+
+
+
+template <>
+float AdditiveQuantizer::
+        compute_1_distance_LUT<true, AdditiveQuantizer::ST_LUT_nonorm>(
+                const uint8_t* codes,
+                const float* LUT) const {
+    BitstringReader bs(codes, code_size);
+    return accumulate_IPs(*this, bs, codes, LUT);
+}
+
+template <>
+float AdditiveQuantizer::
+        compute_1_distance_LUT<false, AdditiveQuantizer::ST_LUT_nonorm>(
+                const uint8_t* codes,
+                const float* LUT) const {
+    BitstringReader bs(codes, code_size);
+    return -accumulate_IPs(*this, bs, codes, LUT);
+}
+
+template <>
+float AdditiveQuantizer::
+        compute_1_distance_LUT<false, AdditiveQuantizer::ST_norm_float>(
+                const uint8_t* codes,
+                const float* LUT) const {
+    BitstringReader bs(codes, code_size);
+    float accu = accumulate_IPs(*this, bs, codes, LUT);
+    uint32_t norm_i = bs.read(32);
+    float norm2 = *(float*)&norm_i;
+    return norm2 - 2 * accu;
+}
+
+template <>
+float AdditiveQuantizer::
+        compute_1_distance_LUT<false, AdditiveQuantizer::ST_norm_qint8>(
+                const uint8_t* codes,
+                const float* LUT) const {
+    BitstringReader bs(codes, code_size);
+    float accu = accumulate_IPs(*this, bs, codes, LUT);
+    uint32_t norm_i = bs.read(8);
+    float norm2 = decode_qint8(norm_i, norm_min, norm_max);
+    return norm2 - 2 * accu;
+}
+
+template <>
+float AdditiveQuantizer::
+        compute_1_distance_LUT<false, AdditiveQuantizer::ST_norm_qint4>(
+                const uint8_t* codes,
+                const float* LUT) const {
+    BitstringReader bs(codes, code_size);
+    float accu = accumulate_IPs(*this, bs, codes, LUT);
+    uint32_t norm_i = bs.read(4);
+    float norm2 = decode_qint4(norm_i, norm_min, norm_max);
+    return norm2 - 2 * accu;
 }
 
 } // namespace faiss

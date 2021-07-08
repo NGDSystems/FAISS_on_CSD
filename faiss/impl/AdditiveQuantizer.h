@@ -36,6 +36,25 @@ struct AdditiveQuantizer {
     bool verbose;    ///< verbose during training?
     bool is_trained; ///< is trained or not
 
+    /// Encodes how search is performed and how vectors are encoded
+    enum Search_type_t {
+        ST_decompress,    ///< decompress database vector
+        ST_LUT_nonorm,    ///< use a LUT, don't include norms (OK for IP or
+                          ///< normalized vectors)
+        ST_norm_from_LUT, ///< compute the norms from the look-up tables (cost
+                          ///< is in O(M^2))
+        ST_norm_float, ///< use a LUT, and store float32 norm with the vectors
+        ST_norm_qint8, ///< use a LUT, and store 8bit-quantized norm
+        ST_norm_qint4,
+    };
+
+    AdditiveQuantizer(
+            size_t d,
+            const std::vector<size_t>& nbits,
+            Search_type_t search_type = ST_decompress);
+
+    AdditiveQuantizer();
+
     ///< compute derived values when d, M and nbits have been set
     void set_derived_values();
 
@@ -52,15 +71,17 @@ struct AdditiveQuantizer {
 
     /** pack a series of code to bit-compact format
      *
-     * @param codes  codes to be packed, size n * code_size
+     * @param codes        codes to be packed, size n * code_size
      * @param packed_codes output bit-compact codes
-     * @param ld_codes  leading dimension of codes
+     * @param ld_codes     leading dimension of codes
+     * @param norms        norms of the vectors (size n)
      */
     void pack_codes(
             size_t n,
             const int32_t* codes,
             uint8_t* packed_codes,
-            int64_t ld_codes = -1) const;
+            int64_t ld_codes = -1,
+            float* norms = nullptr) const;
 
     /** Decode a set of vectors
      *
@@ -70,8 +91,24 @@ struct AdditiveQuantizer {
     void decode(const uint8_t* codes, float* x, size_t n) const;
 
     /****************************************************************************
-     * Support for exhaustive distance computations with the centroids.
-     * Hence, the number of elements that can be enumerated is not too large.
+     * Search functions in an external set of codes.
+     ****************************************************************************/
+
+    /// Also determines what's in the codes
+    Search_type_t search_type;
+
+    /// min/max for quantization of norms
+    float norm_min, norm_max;
+
+    template <bool is_IP, Search_type_t effective_search_type>
+    float compute_1_distance_LUT(const uint8_t* codes, const float* LUT) const;
+
+    /*
+        float compute_1_L2sqr(const uint8_t* codes, const float* LUT);
+    */
+    /****************************************************************************
+     * Support for exhaustive distance computations with all the centroids.
+     * Hence, the number of these centroids should not be too large.
      ****************************************************************************/
     using idx_t = Index::idx_t;
 
@@ -87,7 +124,7 @@ struct AdditiveQuantizer {
     void compute_LUT(size_t n, const float* xq, float* LUT) const;
 
     /// exact IP search
-    void knn_exact_inner_product(
+    void knn_centroids_inner_product(
             idx_t n,
             const float* xq,
             idx_t k,
@@ -101,7 +138,7 @@ struct AdditiveQuantizer {
     void compute_centroid_norms(float* norms) const;
 
     /** Exact L2 search, with precomputed norms */
-    void knn_exact_L2(
+    void knn_centroids_L2(
             idx_t n,
             const float* xq,
             idx_t k,

@@ -26,6 +26,7 @@
 #include <faiss/utils/hamming.h>
 
 #include <faiss/Index2Layer.h>
+#include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexHNSW.h>
 #include <faiss/IndexIVF.h>
@@ -41,7 +42,6 @@
 #include <faiss/IndexPQFastScan.h>
 #include <faiss/IndexPreTransform.h>
 #include <faiss/IndexRefine.h>
-#include <faiss/IndexResidual.h>
 #include <faiss/IndexScalarQuantizer.h>
 #include <faiss/MetaIndexes.h>
 #include <faiss/VectorTransform.h>
@@ -166,6 +166,9 @@ void write_ResidualQuantizer(const ResidualQuantizer* rq, IOWriter* f) {
     WRITE1(rq->train_type);
     WRITE1(rq->max_beam_size);
     WRITEVECTOR(rq->codebooks);
+    WRITE1(rq->search_type);
+    WRITE1(rq->norm_min);
+    WRITE1(rq->norm_max);
 }
 
 static void write_ScalarQuantizer(const ScalarQuantizer* ivsc, IOWriter* f) {
@@ -344,9 +347,6 @@ void write_index(const Index* idx, IOWriter* f) {
         WRITE1(h);
         write_index_header(idx, f);
         write_ResidualQuantizer(&idxr->rq, f);
-        WRITE1(idxr->search_type);
-        WRITE1(idxr->norm_min);
-        WRITE1(idxr->norm_max);
         WRITE1(idxr->code_size);
         WRITEVECTOR(idxr->codes);
     } else if (

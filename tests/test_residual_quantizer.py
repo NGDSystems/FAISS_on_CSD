@@ -413,7 +413,7 @@ class TestAdditiveQuantizerWithLUT(unittest.TestCase):
         Dnew = np.zeros_like(Dref)
         Inew = np.zeros_like(Iref)
 
-        aq.knn_exact_inner_product(len(xq), sp(xq), 10, sp(Dnew), sp(Inew))
+        aq.knn_centroids_inner_product(len(xq), sp(xq), 10, sp(Dnew), sp(Inew))
 
         np.testing.assert_array_almost_equal(Dref, Dnew, decimal=5)
         np.testing.assert_array_equal(Iref, Inew)
@@ -425,7 +425,110 @@ class TestAdditiveQuantizerWithLUT(unittest.TestCase):
         Dnew = np.zeros_like(Dref)
         Inew = np.zeros_like(Iref)
 
-        aq.knn_exact_L2(len(xq), sp(xq), 10, sp(Dnew), sp(Inew), sp(norms))
+        aq.knn_centroids_L2(len(xq), sp(xq), 10, sp(Dnew), sp(Inew), sp(norms))
 
         np.testing.assert_array_equal(Iref, Inew)
         np.testing.assert_array_almost_equal(Dref, Dnew, decimal=5)
+
+
+class TestIndexResidualSearch(unittest.TestCase):
+
+    def test_search_IP(self):
+        ds = datasets.SyntheticDataset(32, 1000, 200, 100)
+
+        xt = ds.get_train()
+        xb = ds.get_database()
+        xq = ds.get_queries()
+
+        ir = faiss.IndexResidual(ds.d, 3, 4, faiss.METRIC_INNER_PRODUCT)
+        ir.rq.train_type = faiss.ResidualQuantizer.Train_default
+        ir.train(xt)
+
+        ir.add(xb)
+
+        Dref, Iref = ir.search(xq, 4)
+
+        AQ = faiss.AdditiveQuantizer
+        ir2 = faiss.IndexResidual(ds.d, 3, 4, faiss.METRIC_INNER_PRODUCT, AQ.ST_LUT_nonorm)
+        ir2.rq.codebooks = ir.rq.codebooks    # fake training
+        ir2.rq.is_trained = True
+        ir2.is_trained = True
+        ir2.add(xb)
+
+        D2, I2 = ir2.search(xq, 4)
+
+        np.testing.assert_array_equal(Iref, I2)
+        np.testing.assert_array_almost_equal(Dref, D2, decimal=5)
+
+    def test_search_L2(self):
+        ds = datasets.SyntheticDataset(32, 1000, 200, 100)
+
+        xt = ds.get_train()
+        xb = ds.get_database()
+        xq = ds.get_queries()
+        gt = ds.get_groundtruth(10)
+
+        ir = faiss.IndexResidual(ds.d, 3, 4)
+        ir.rq.train_type = faiss.ResidualQuantizer.Train_default
+        ir.train(xt)
+
+        ir.add(xb)
+
+        Dref, Iref = ir.search(xq, 10)
+
+        # 388
+        inter_ref = faiss.eval_intersection(Iref, gt)
+
+        AQ = faiss.AdditiveQuantizer
+        for st in AQ.ST_norm_float, AQ.ST_norm_qint8, AQ.ST_norm_qint4:
+
+            ir2 = faiss.IndexResidual(ds.d, 3, 4, faiss.METRIC_L2, st)
+            ir2.train(xt)   # to get the norm bounds
+            ir2.rq.codebooks = ir.rq.codebooks    # fake training
+            ir2.add(xb)
+
+            D2, I2 = ir2.search(xq, 10)
+
+            inter_2 = faiss.eval_intersection(I2, gt)
+            # ST_norm_float: 426, ST_norm_qint8: 423
+            # this is actually better than the accuracy with full reconstruction
+            # because the norm estimation is more accurate
+            self.assertGreater(inter_2, inter_ref)
+
+
+# class TestIVFResidualQuantizer(unittest.TestCase):
+
+class TestIVFResidualQuantizer_disabled:
+
+    def do_test_accuracy(self, st):
+        ds = datasets.SyntheticDataset(32, 3000, 1000, 100)
+
+        quantizer = faiss.IndexFlatL2(ds.d)
+
+        index = faiss.IndexIVFResidual(
+            quantizer, ds.d, 100, 3, 4,
+            faiss.METRIC_L2,
+            st
+        )
+        index.by_residual = True
+        # self.assertEqual(index.code_size, 2)
+
+        index.rq.train_type
+        index.rq.train_type = faiss.ResidualQuantizer.Train_default
+
+        index.train(ds.get_train())
+        index.add(ds.get_database())
+
+        for nprobe in 1, 10, 20, 50:
+
+            index.nprobe = nprobe
+            D, I = index.search(ds.get_queries(), 10)
+            inter = faiss.eval_intersection(I, ds.get_groundtruth(10))
+            print("nprobe=", nprobe, "inter=", inter)
+        1/0
+
+    def test_decompress_L2(self):
+        self.do_test_accuracy(faiss.AdditiveQuantizer.ST_decompress)
+
+    def test_norm_float_L2(self):
+        self.do_test_accuracy(faiss.AdditiveQuantizer.ST_norm_float)

@@ -40,7 +40,7 @@
 #include <faiss/IndexPQFastScan.h>
 #include <faiss/IndexPreTransform.h>
 #include <faiss/IndexRefine.h>
-#include <faiss/IndexResidual.h>
+#include <faiss/IndexAdditiveQuantizer.h>
 #include <faiss/IndexScalarQuantizer.h>
 #include <faiss/MetaIndexes.h>
 #include <faiss/VectorTransform.h>
@@ -243,11 +243,14 @@ static void read_ResidualQuantizer(ResidualQuantizer* rq, IOReader* f) {
     READ1(rq->d);
     READ1(rq->M);
     READVECTOR(rq->nbits);
-    rq->set_derived_values();
     READ1(rq->is_trained);
     READ1(rq->train_type);
     READ1(rq->max_beam_size);
     READVECTOR(rq->codebooks);
+    READ1(rq->search_type);
+    READ1(rq->norm_min);
+    READ1(rq->norm_max);
+    rq->set_derived_values();
 }
 
 static void read_ScalarQuantizer(ScalarQuantizer* ivsc, IOReader* f) {
@@ -479,9 +482,6 @@ Index* read_index(IOReader* f, int io_flags) {
         IndexResidual* idxr = new IndexResidual();
         read_index_header(idxr, f);
         read_ResidualQuantizer(&idxr->rq, f);
-        READ1(idxr->search_type);
-        READ1(idxr->norm_min);
-        READ1(idxr->norm_max);
         READ1(idxr->code_size);
         READVECTOR(idxr->codes);
         idx = idxr;
