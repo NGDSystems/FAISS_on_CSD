@@ -45,7 +45,7 @@ The main authors of Faiss are:
 - [Hervé Jégou](https://github.com/jegou) initiated the Faiss project and wrote its first implementation
 - [Matthijs Douze](https://github.com/mdouze) implemented most of the CPU Faiss
 - [Jeff Johnson](https://github.com/wickedfoo) implemented all of the GPU Faiss
-- [Lucas Hosseini](https://github.com/beauby) implemented the binary indexes
+- [Lucas Hosseini](https://github.com/beauby) implemented the binary indexes and manages the github build system
 
 ## Reference
 
